@@ -392,6 +392,49 @@ export const poolRenewAccount: POOL.RenewAccountResponse.AsObject = {
   account: poolInitAccount,
 };
 
+export const poolGetInfo: POOL.GetInfoResponse.AsObject = {
+  version: '0.5.4-alpha commit=v0.5.4-alpha.0.20220114202858-525fe156d240',
+  accountsTotal: 5,
+  accountsActive: 1,
+  accountsActiveExpired: 0,
+  accountsArchived: 4,
+  ordersTotal: 16,
+  ordersActive: 0,
+  ordersArchived: 16,
+  currentBlockHeight: 2164104,
+  batchesInvolved: 8,
+  nodeRating: {
+    nodePubkey: '027433f335bbea5f5631bda2bcf45f57d069a084c800aa80148909bc392b99103c',
+    nodeTier: AUCT.NodeTier.TIER_1,
+  },
+  lsatTokens: 1,
+  subscribedToAuctioneer: true,
+  newNodesOnly: false,
+  marketInfoMap: [
+    [
+      2016,
+      {
+        numAsksList: [
+          { tier: AUCT.NodeTier.TIER_0, value: 15 },
+          { tier: AUCT.NodeTier.TIER_1, value: 5 },
+        ],
+        numBidsList: [
+          { tier: AUCT.NodeTier.TIER_0, value: 10 },
+          { tier: AUCT.NodeTier.TIER_1, value: 15 },
+        ],
+        askOpenInterestUnitsList: [
+          { tier: AUCT.NodeTier.TIER_0, value: 152 },
+          { tier: AUCT.NodeTier.TIER_1, value: 654 },
+        ],
+        bidOpenInterestUnitsList: [
+          { tier: AUCT.NodeTier.TIER_0, value: 2372 },
+          { tier: AUCT.NodeTier.TIER_1, value: 36 },
+        ],
+      },
+    ],
+  ],
+};
+
 export const poolListAccounts: POOL.ListAccountsResponse.AsObject = {
   accountsList: [
     poolInitAccount,
@@ -859,6 +902,7 @@ export const sampleApiResponses: Record<string, any> = {
   'looprpc.SwapClient.GetLoopInQuote': loopInQuote,
   'looprpc.SwapClient.LoopIn': loopSwapResponse,
   'looprpc.SwapClient.LoopOut': loopSwapResponse,
+  'poolrpc.Trader.GetInfo': poolGetInfo,
   'poolrpc.Trader.ListAccounts': poolListAccounts,
   'poolrpc.Trader.QuoteAccount': poolQuoteAccount,
   'poolrpc.Trader.InitAccount': poolInitAccount,
