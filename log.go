@@ -11,6 +11,7 @@ import (
 	"github.com/lightninglabs/lightning-terminal/rules"
 	"github.com/lightninglabs/lightning-terminal/session"
 	"github.com/lightninglabs/lightning-terminal/status"
+	"github.com/lightninglabs/lightning-terminal/subservers"
 	"github.com/lightninglabs/loop/loopd"
 	"github.com/lightninglabs/pool"
 	"github.com/lightningnetwork/lnd"
@@ -78,6 +79,9 @@ func SetupLoggers(root *build.RotatingLogWriter, intercept signal.Interceptor) {
 		autopilotserver.UseLogger,
 	)
 	lnd.AddSubLogger(root, status.Subsystem, intercept, status.UseLogger)
+	lnd.AddSubLogger(
+		root, subservers.Subsystem, intercept, subservers.UseLogger,
+	)
 
 	// Add daemon loggers to lnd's root logger.
 	faraday.SetupLoggers(root, intercept)

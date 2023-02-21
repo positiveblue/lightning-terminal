@@ -1,63 +1,32 @@
-package terminal
+package subservers
 
 import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/lightninglabs/lightning-terminal/perms"
 	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
-	"github.com/lightningnetwork/lnd/macaroons"
+	grpcProxy "github.com/mwitkow/grpc-proxy/proxy"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 )
 
-// SubServer defines an interface that should be implemented by any sub-server
-// that the subServer manager should manage. A sub-server can be run in either
-// integrated or remote mode. A sub-server is considered non-fatal to LiT
-// meaning that if a sub-server fails to start, LiT can safely continue with its
-// operations and other sub-servers can too.
-type SubServer interface {
-	// Name returns the name of the sub-server.
-	Name() string
+var (
+	// maxMsgRecvSize is the largest message our REST proxy will receive. We
+	// set this to 200MiB atm.
+	maxMsgRecvSize = grpc.MaxCallRecvMsgSize(1 * 1024 * 1024 * 200)
 
-	// Remote returns true if the sub-server is running remotely and so
-	// should be connected to instead of spinning up an integrated server.
-	Remote() bool
-
-	// RemoteConfig returns the config required to connect to the sub-server
-	// if it is running in remote mode.
-	RemoteConfig() *RemoteDaemonConfig
-
-	// Start starts the sub-server in integrated mode.
-	Start(lnrpc.LightningClient, *lndclient.GrpcLndServices, bool) error
-
-	// Stop stops the sub-server in integrated mode.
-	Stop() error
-
-	// RegisterGrpcService must register the sub-server's GRPC server with
-	// the given registrar.
-	RegisterGrpcService(grpc.ServiceRegistrar)
-
-	// PermsSubServer returns the name that the permission manager stores
-	// the permissions for this SubServer under.
-	PermsSubServer() perms.SubServerName
-
-	// ServerErrChan returns an error channel that should be listened on
-	// after starting the sub-server to listen for any runtime errors. It
-	// is optional and may be set to nil. This only applies in integrated
-	// mode.
-	ServerErrChan() chan error
-
-	// MacPath returns the path to the sub-server's macaroon if it is not
-	// running in remote mode.
-	MacPath() string
-
-	macaroons.MacaroonValidator
-}
+	// defaultConnectTimeout is the default timeout for connecting to the
+	// backend.
+	defaultConnectTimeout = 15 * time.Second
+)
 
 // subServer is a wrapper around the SubServer interface and is used by the
 // subServerMgr to manage a SubServer.
@@ -176,20 +145,19 @@ func (s *subServer) startIntegrated(lndClient lnrpc.LightningClient,
 
 // connectRemote attempts to make a connection to the remote sub-server.
 func (s *subServer) connectRemote() error {
-	var err error
-	s.remoteConn, err = dialBackend(
-		s.Name(), s.RemoteConfig().RPCServer,
-		lncfg.CleanAndExpandPath(s.RemoteConfig().TLSCertPath),
-	)
+	certPath := lncfg.CleanAndExpandPath(s.RemoteConfig().TLSCertPath)
+	conn, err := dialBackend(s.Name(), s.RemoteConfig().RPCServer, certPath)
 	if err != nil {
 		return fmt.Errorf("remote dial error: %v", err)
 	}
 
+	s.remoteConn = conn
+
 	return nil
 }
 
-// subServerMgr manages a set of subServer objects.
-type subServerMgr struct {
+// Manager manages a set of subServer objects.
+type Manager struct {
 	servers []*subServer
 	mu      sync.RWMutex
 
@@ -197,11 +165,11 @@ type subServerMgr struct {
 	permsMgr     *perms.Manager
 }
 
-// newSubServerMgr constructs a new subServerMgr.
-func newSubServerMgr(permsMgr *perms.Manager,
-	statusServer *status.Server) *subServerMgr {
+// NewManager constructs a new subServerMgr.
+func NewManager(permsMgr *perms.Manager,
+	statusServer *status.Server) *Manager {
 
-	return &subServerMgr{
+	return &Manager{
 		servers:      []*subServer{},
 		statusServer: statusServer,
 		permsMgr:     permsMgr,
@@ -209,7 +177,7 @@ func newSubServerMgr(permsMgr *perms.Manager,
 }
 
 // AddServer adds a new subServer to the manager's set.
-func (s *subServerMgr) AddServer(ss SubServer) {
+func (s *Manager) AddServer(ss SubServer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -223,7 +191,7 @@ func (s *subServerMgr) AddServer(ss SubServer) {
 
 // StartIntegratedServers starts all the manager's sub-servers that should be
 // started in integrated mode.
-func (s *subServerMgr) StartIntegratedServers(lndClient lnrpc.LightningClient,
+func (s *Manager) StartIntegratedServers(lndClient lnrpc.LightningClient,
 	lndGrpc *lndclient.GrpcLndServices, withMacaroonService bool) {
 
 	s.mu.Lock()
@@ -253,7 +221,7 @@ func (s *subServerMgr) StartIntegratedServers(lndClient lnrpc.LightningClient,
 
 // ConnectRemoteSubServers creates connections to all the manager's sub-servers
 // that are running remotely.
-func (s *subServerMgr) ConnectRemoteSubServers() {
+func (s *Manager) ConnectRemoteSubServers() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -274,7 +242,7 @@ func (s *subServerMgr) ConnectRemoteSubServers() {
 
 // RegisterRPCServices registers all the manager's sub-servers with the given
 // grpc registrar.
-func (s *subServerMgr) RegisterRPCServices(server grpc.ServiceRegistrar) {
+func (s *Manager) RegisterRPCServices(server grpc.ServiceRegistrar) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -295,7 +263,7 @@ func (s *subServerMgr) RegisterRPCServices(server grpc.ServiceRegistrar) {
 // and if so, the remote connection to that sub-server is returned. The bool
 // return value indicates if the uri is managed by one of the sub-servers
 // running in remote mode.
-func (s *subServerMgr) GetRemoteConn(uri string) (bool, *grpc.ClientConn) {
+func (s *Manager) GetRemoteConn(uri string) (bool, *grpc.ClientConn) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -319,7 +287,7 @@ func (s *subServerMgr) GetRemoteConn(uri string) (bool, *grpc.ClientConn) {
 // the macaroon will be validated by the remote subserver itself when the
 // request arrives. Otherwise, the integrated sub-server's validator validates
 // the macaroon.
-func (s *subServerMgr) ValidateMacaroon(ctx context.Context,
+func (s *Manager) ValidateMacaroon(ctx context.Context,
 	requiredPermissions []bakery.Op, uri string) (bool, error) {
 
 	s.mu.RLock()
@@ -342,11 +310,7 @@ func (s *subServerMgr) ValidateMacaroon(ctx context.Context,
 
 		err := ss.ValidateMacaroon(ctx, requiredPermissions, uri)
 		if err != nil {
-			return true, &proxyErr{
-				proxyContext: ss.Name(),
-				wrapped: fmt.Errorf("invalid macaroon: %v",
-					err),
-			}
+			return true, fmt.Errorf("invalid macaroon: %v", err)
 		}
 	}
 
@@ -354,7 +318,7 @@ func (s *subServerMgr) ValidateMacaroon(ctx context.Context,
 }
 
 // HandledBy returns true if one of its sub-servers owns the given URI.
-func (s *subServerMgr) HandledBy(uri string) (bool, string) {
+func (s *Manager) HandledBy(uri string) (bool, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -371,7 +335,7 @@ func (s *subServerMgr) HandledBy(uri string) (bool, string) {
 
 // MacaroonPath checks if any of the manager's sub-servers owns the given uri
 // and if so, the appropriate macaroon path is returned for that sub-server.
-func (s *subServerMgr) MacaroonPath(uri string) (bool, string) {
+func (s *Manager) MacaroonPath(uri string) (bool, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -393,7 +357,7 @@ func (s *subServerMgr) MacaroonPath(uri string) (bool, string) {
 // ReadRemoteMacaroon checks if any of the manager's sub-servers running in
 // remote mode owns the given uri and if so, the appropriate macaroon path is
 // returned for that sub-server.
-func (s *subServerMgr) ReadRemoteMacaroon(uri string) (bool, []byte, error) {
+func (s *Manager) ReadRemoteMacaroon(uri string) (macaroonPath string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -403,21 +367,19 @@ func (s *subServerMgr) ReadRemoteMacaroon(uri string) (bool, []byte, error) {
 		}
 
 		if !ss.Remote() {
-			return false, nil, nil
+			// return false, nil, nil
+			return ""
 		}
 
-		macBytes, err := readMacaroon(lncfg.CleanAndExpandPath(
-			ss.RemoteConfig().MacaroonPath,
-		))
+		return ss.RemoteConfig().MacaroonPath
 
-		return true, macBytes, err
 	}
 
-	return false, nil, nil
+	return ""
 }
 
 // Stop stops all the manager's sub-servers
-func (s *subServerMgr) Stop() error {
+func (s *Manager) Stop() error {
 	var returnErr error
 
 	s.mu.RLock()
@@ -438,4 +400,34 @@ func (s *subServerMgr) Stop() error {
 	}
 
 	return returnErr
+}
+
+// dialBackend connects to a gRPC backend through the given address and uses the
+// given TLS certificate to authenticate the connection.
+func dialBackend(name, dialAddr, tlsCertPath string) (*grpc.ClientConn, error) {
+	tlsConfig, err := credentials.NewClientTLSFromFile(tlsCertPath, "")
+	if err != nil {
+		return nil, fmt.Errorf("could not read %s TLS cert %s: %v",
+			name, tlsCertPath, err)
+	}
+
+	opts := []grpc.DialOption{
+		// From the grpcProxy doc: This codec is *crucial* to the
+		// functioning of the proxy.
+		grpc.WithCodec(grpcProxy.Codec()), // nolint
+		grpc.WithTransportCredentials(tlsConfig),
+		grpc.WithDefaultCallOptions(maxMsgRecvSize),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff:           backoff.DefaultConfig,
+			MinConnectTimeout: defaultConnectTimeout,
+		}),
+	}
+
+	log.Infof("Dialing %s gRPC server at %s", name, dialAddr)
+	cc, err := grpc.Dial(dialAddr, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed dialing %s backend: %v", name,
+			err)
+	}
+	return cc, nil
 }

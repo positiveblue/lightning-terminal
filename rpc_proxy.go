@@ -16,6 +16,7 @@ import (
 	"github.com/lightninglabs/lightning-terminal/perms"
 	"github.com/lightninglabs/lightning-terminal/session"
 	"github.com/lightninglabs/lightning-terminal/status"
+	"github.com/lightninglabs/lightning-terminal/subservers"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/macaroons"
 	grpcProxy "github.com/mwitkow/grpc-proxy/proxy"
@@ -65,7 +66,7 @@ func (e *proxyErr) Unwrap() error {
 func newRpcProxy(cfg *Config, validator macaroons.MacaroonValidator,
 	superMacValidator session.SuperMacaroonValidator,
 	permsMgr *perms.Manager, statusServer *status.Server,
-	subServerMgr *subServerMgr) *rpcProxy {
+	subServerMgr *subservers.Manager) *rpcProxy {
 
 	// The gRPC web calls are protected by HTTP basic auth which is defined
 	// by base64(username:password). Because we only have a password, we
@@ -169,7 +170,7 @@ type rpcProxy struct {
 	lndConn *grpc.ClientConn
 
 	statusServer *status.Server
-	subServerMgr *subServerMgr
+	subServerMgr *subservers.Manager
 
 	grpcServer   *grpc.Server
 	grpcWebProxy *grpcweb.WrappedGrpcServer
@@ -618,9 +619,9 @@ func (p *rpcProxy) convertSuperMacaroon(ctx context.Context, macHex string,
 
 	// Is this actually a request that goes to a daemon that is running
 	// remotely?
-	handled, macBytes, err := p.subServerMgr.ReadRemoteMacaroon(fullMethod)
-	if handled {
-		return macBytes, err
+	macaroonPath := p.subServerMgr.ReadRemoteMacaroon(fullMethod)
+	if macaroonPath != "" {
+		return readMacaroon(lncfg.CleanAndExpandPath(macaroonPath))
 	}
 
 	return nil, nil

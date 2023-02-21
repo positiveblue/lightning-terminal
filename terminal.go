@@ -31,6 +31,7 @@ import (
 	"github.com/lightninglabs/lightning-terminal/rules"
 	"github.com/lightninglabs/lightning-terminal/session"
 	"github.com/lightninglabs/lightning-terminal/status"
+	"github.com/lightninglabs/lightning-terminal/subservers"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
 	"github.com/lightninglabs/loop/looprpc"
@@ -158,7 +159,7 @@ type LightningTerminal struct {
 	basicClient lnrpc.LightningClient
 
 	statusServer *status.Server
-	subServerMgr *subServerMgr
+	subServerMgr *subservers.Manager
 
 	autopilotClient autopilotserver.Autopilot
 
@@ -229,7 +230,7 @@ func (g *LightningTerminal) Run() error {
 	g.statusServer.RegisterServer(LNDSubServer)
 	g.statusServer.RegisterServer(LitdSubServer)
 
-	g.subServerMgr = newSubServerMgr(g.permsMgr, g.statusServer)
+	g.subServerMgr = subservers.NewManager(g.permsMgr, g.statusServer)
 
 	// Construct the rpcProxy. It must be initialised before the main web
 	// server is started.
@@ -963,7 +964,15 @@ func (g *LightningTerminal) ValidateMacaroon(ctx context.Context,
 		ctx, requiredPermissions, fullMethod,
 	)
 	if handled {
-		return err
+		if err != nil {
+			_, name := g.subServerMgr.HandledBy(fullMethod)
+			return &proxyErr{
+				proxyContext: name,
+				wrapped:      err,
+			}
+		}
+
+		return nil
 	}
 
 	if g.permsMgr.IsSubServerURI(perms.SubServerLit, fullMethod) {
@@ -1395,7 +1404,7 @@ func (g *LightningTerminal) validateSuperMacaroon(ctx context.Context,
 // initSubServers registers the faraday and loop sub-servers with the
 // subServerMgr.
 func (g *LightningTerminal) initSubServers() {
-	g.subServerMgr.AddServer(NewFaradaySubServer(
+	g.subServerMgr.AddServer(subservers.NewFaradaySubServer(
 		g.cfg.Faraday, g.cfg.faradayRpcConfig, g.cfg.Remote.Faraday,
 		g.cfg.faradayRemote,
 	))
@@ -1403,14 +1412,14 @@ func (g *LightningTerminal) initSubServers() {
 	// Overwrite the loop daemon's user agent name so it sends "litd"
 	// instead of "loopd".
 	loop.AgentName = "litd"
-	g.subServerMgr.AddServer(NewLoopSubServer(
+	g.subServerMgr.AddServer(subservers.NewLoopSubServer(
 		g.cfg.Loop, g.cfg.Remote.Loop, g.cfg.loopRemote,
 	))
 
 	// Overwrite the pool daemon's user agent name so it sends "litd"
 	// instead of and "poold".
 	pool.SetAgentName("litd")
-	g.subServerMgr.AddServer(NewPoolSubServer(
+	g.subServerMgr.AddServer(subservers.NewPoolSubServer(
 		g.cfg.Pool, g.cfg.Remote.Pool, g.cfg.poolRemote,
 	))
 }

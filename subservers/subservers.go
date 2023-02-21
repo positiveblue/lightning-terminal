@@ -1,4 +1,4 @@
-package terminal
+package subservers
 
 import (
 	"github.com/lightninglabs/faraday"
