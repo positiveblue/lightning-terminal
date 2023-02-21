@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/lightninglabs/lightning-terminal/perms"
+	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -192,13 +193,13 @@ type subServerMgr struct {
 	servers []*subServer
 	mu      sync.RWMutex
 
-	statusServer *statusServer
+	statusServer *status.Server
 	permsMgr     *perms.Manager
 }
 
 // newSubServerMgr constructs a new subServerMgr.
 func newSubServerMgr(permsMgr *perms.Manager,
-	statusServer *statusServer) *subServerMgr {
+	statusServer *status.Server) *subServerMgr {
 
 	return &subServerMgr{
 		servers:      []*subServer{},
@@ -217,7 +218,7 @@ func (s *subServerMgr) AddServer(ss SubServer) {
 		quit:      make(chan struct{}),
 	})
 
-	s.statusServer.RegisterSubServer(ss.Name())
+	s.statusServer.RegisterServer(ss.Name())
 }
 
 // StartIntegratedServers starts all the manager's sub-servers that should be
@@ -236,17 +237,17 @@ func (s *subServerMgr) StartIntegratedServers(lndClient lnrpc.LightningClient,
 		err := ss.startIntegrated(
 			lndClient, lndGrpc, withMacaroonService,
 			func(err error) {
-				s.statusServer.setServerErrored(
+				s.statusServer.SetExitError(
 					ss.Name(), err.Error(),
 				)
 			},
 		)
 		if err != nil {
-			s.statusServer.setServerErrored(ss.Name(), err.Error())
+			s.statusServer.SetExitError(ss.Name(), err.Error())
 			continue
 		}
 
-		s.statusServer.setServerRunning(ss.Name())
+		s.statusServer.SetRunning(ss.Name())
 	}
 }
 
@@ -263,11 +264,11 @@ func (s *subServerMgr) ConnectRemoteSubServers() {
 
 		err := ss.connectRemote()
 		if err != nil {
-			s.statusServer.setServerErrored(ss.Name(), err.Error())
+			s.statusServer.SetExitError(ss.Name(), err.Error())
 			continue
 		}
 
-		s.statusServer.setServerRunning(ss.Name())
+		s.statusServer.SetRunning(ss.Name())
 	}
 }
 
@@ -433,7 +434,7 @@ func (s *subServerMgr) Stop() error {
 			returnErr = err
 		}
 
-		s.statusServer.setServerStopped(ss.Name())
+		s.statusServer.SetStopped(ss.Name())
 	}
 
 	return returnErr

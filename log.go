@@ -10,6 +10,7 @@ import (
 	mid "github.com/lightninglabs/lightning-terminal/rpcmiddleware"
 	"github.com/lightninglabs/lightning-terminal/rules"
 	"github.com/lightninglabs/lightning-terminal/session"
+	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightninglabs/loop/loopd"
 	"github.com/lightninglabs/pool"
 	"github.com/lightningnetwork/lnd"
@@ -76,6 +77,7 @@ func SetupLoggers(root *build.RotatingLogWriter, intercept signal.Interceptor) {
 		root, autopilotserver.Subsystem, intercept,
 		autopilotserver.UseLogger,
 	)
+	lnd.AddSubLogger(root, status.Subsystem, intercept, status.UseLogger)
 
 	// Add daemon loggers to lnd's root logger.
 	faraday.SetupLoggers(root, intercept)
@@ -84,6 +86,7 @@ func SetupLoggers(root *build.RotatingLogWriter, intercept signal.Interceptor) {
 
 	// Setup the gRPC loggers too.
 	grpclog.SetLoggerV2(NewGrpcLogLogger(root, intercept, GrpcLogSubsystem))
+
 }
 
 // genSubLogger creates a logger for a subsystem. We provide an instance of

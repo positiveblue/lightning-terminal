@@ -15,13 +15,14 @@ import (
 	"github.com/lightninglabs/lightning-terminal/litrpc"
 	"github.com/lightninglabs/lightning-terminal/perms"
 	"github.com/lightninglabs/lightning-terminal/session"
+	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/macaroons"
 	grpcProxy "github.com/mwitkow/grpc-proxy/proxy"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/status"
+	grpcStatus "google.golang.org/grpc/status"
 	"gopkg.in/macaroon.v2"
 )
 
@@ -31,6 +32,9 @@ const (
 	// HeaderMacaroon is the HTTP header field name that is used to send
 	// the macaroon.
 	HeaderMacaroon = "Macaroon"
+
+	LNDSubServer  = "lnd"
+	LitdSubServer = "litd"
 )
 
 // ErrWaitingToStart is returned if Lit's rpcProxy is not yet ready to handle
@@ -60,7 +64,7 @@ func (e *proxyErr) Unwrap() error {
 // component.
 func newRpcProxy(cfg *Config, validator macaroons.MacaroonValidator,
 	superMacValidator session.SuperMacaroonValidator,
-	permsMgr *perms.Manager, statusServer *statusServer,
+	permsMgr *perms.Manager, statusServer *status.Server,
 	subServerMgr *subServerMgr) *rpcProxy {
 
 	// The gRPC web calls are protected by HTTP basic auth which is defined
@@ -164,7 +168,7 @@ type rpcProxy struct {
 
 	lndConn *grpc.ClientConn
 
-	statusServer *statusServer
+	statusServer *status.Server
 	subServerMgr *subServerMgr
 
 	grpcServer   *grpc.Server
@@ -329,7 +333,7 @@ func (p *rpcProxy) makeDirector(allowLitRPC bool) func(ctx context.Context,
 		if isSubServerURI(perms.SubServerLit, requestURI) &&
 			!allowLitRPC {
 
-			return outCtx, nil, status.Errorf(
+			return outCtx, nil, grpcStatus.Errorf(
 				codes.Unimplemented, "unknown service %s",
 				requestURI,
 			)
@@ -417,9 +421,9 @@ func (p *rpcProxy) checkSubSystemStarted(requestURI string) error {
 		return fmt.Errorf("unknown gRPC web request: %v", requestURI)
 	}
 
-	started, startErr := p.statusServer.getSubServerState(system)
-	if !started {
-		return fmt.Errorf("%s is not running: %s", system, startErr)
+	status := p.statusServer.ServerStatus(system)
+	if !status.Running {
+		return fmt.Errorf("%s is not running: %s", system, status.Err)
 	}
 
 	return nil

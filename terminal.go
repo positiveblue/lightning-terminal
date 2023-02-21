@@ -30,6 +30,7 @@ import (
 	mid "github.com/lightninglabs/lightning-terminal/rpcmiddleware"
 	"github.com/lightninglabs/lightning-terminal/rules"
 	"github.com/lightninglabs/lightning-terminal/session"
+	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightninglabs/loop"
 	"github.com/lightninglabs/loop/looprpc"
@@ -156,7 +157,7 @@ type LightningTerminal struct {
 	lndClient   *lndclient.GrpcLndServices
 	basicClient lnrpc.LightningClient
 
-	statusServer *statusServer
+	statusServer *status.Server
 	subServerMgr *subServerMgr
 
 	autopilotClient autopilotserver.Autopilot
@@ -189,7 +190,7 @@ type LightningTerminal struct {
 // New creates a new instance of the lightning-terminal daemon.
 func New() *LightningTerminal {
 	return &LightningTerminal{
-		statusServer: newStatusServer(),
+		statusServer: status.NewServer(),
 	}
 }
 
@@ -225,8 +226,8 @@ func (g *LightningTerminal) Run() error {
 		return fmt.Errorf("could not create permissions manager")
 	}
 
-	g.statusServer.RegisterSubServer(LNDSubServer)
-	g.statusServer.RegisterSubServer(LitdSubServer)
+	g.statusServer.RegisterServer(LNDSubServer)
+	g.statusServer.RegisterServer(LitdSubServer)
 
 	g.subServerMgr = newSubServerMgr(g.permsMgr, g.statusServer)
 
@@ -257,7 +258,7 @@ func (g *LightningTerminal) Run() error {
 	// could not start or LND could not start or be connected to.
 	startErr := g.start()
 	if startErr != nil {
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LitdSubServer, "could not start Lit: %v", startErr,
 		)
 	}
@@ -454,13 +455,13 @@ func (g *LightningTerminal) start() error {
 	case <-readyChan:
 
 	case err := <-g.errQueue.ChanOut():
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "error from errQueue channel",
 		)
 		return fmt.Errorf("could not start LND: %v", err)
 
 	case <-lndQuit:
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "lndQuit channel closed",
 		)
 		return fmt.Errorf("LND has stopped")
@@ -481,7 +482,7 @@ func (g *LightningTerminal) start() error {
 	// Connect to LND.
 	g.lndConn, err = connectLND(g.cfg, bufRpcListener)
 	if err != nil {
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "could not connect to LND: %v", err,
 		)
 
@@ -513,7 +514,7 @@ func (g *LightningTerminal) start() error {
 		return err
 
 	case <-lndQuit:
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "lndQuit channel closed",
 		)
 		return fmt.Errorf("LND is not running")
@@ -523,7 +524,7 @@ func (g *LightningTerminal) start() error {
 	}
 
 	// We can now set the status of LND as running.
-	g.statusServer.setServerRunning(LNDSubServer)
+	g.statusServer.SetRunning(LNDSubServer)
 
 	// If we're in integrated mode, we'll need to wait for lnd to send the
 	// macaroon after unlock before going any further.
@@ -535,7 +536,7 @@ func (g *LightningTerminal) start() error {
 	// Set up all the LND clients required by LiT.
 	err = g.setUpLNDClients()
 	if err != nil {
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "could not set up LND clients: %v", err,
 		)
 
@@ -569,7 +570,7 @@ func (g *LightningTerminal) start() error {
 	}
 
 	// We can now set the status of LiT as running.
-	g.statusServer.setServerRunning(LitdSubServer)
+	g.statusServer.SetRunning(LitdSubServer)
 
 	// Now block until we receive an error or the main shutdown signal.
 	select {
@@ -580,7 +581,7 @@ func (g *LightningTerminal) start() error {
 		}
 
 	case <-lndQuit:
-		g.statusServer.setServerErrored(
+		g.statusServer.SetExitError(
 			LNDSubServer, "lndQuit channel closed",
 		)
 
