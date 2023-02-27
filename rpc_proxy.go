@@ -33,9 +33,6 @@ const (
 	// HeaderMacaroon is the HTTP header field name that is used to send
 	// the macaroon.
 	HeaderMacaroon = "Macaroon"
-
-	LNDSubServer  = "lnd"
-	LitdSubServer = "litd"
 )
 
 // ErrWaitingToStart is returned if Lit's rpcProxy is not yet ready to handle
@@ -331,9 +328,7 @@ func (p *rpcProxy) makeDirector(allowLitRPC bool) func(ctx context.Context,
 		}
 
 		// Calls to LiT session RPC aren't allowed in some cases.
-		if isSubServerURI(perms.SubServerLit, requestURI) &&
-			!allowLitRPC {
-
+		if isSubServerURI(subservers.LIT, requestURI) && !allowLitRPC {
 			return outCtx, nil, grpcStatus.Errorf(
 				codes.Unimplemented, "unknown service %s",
 				requestURI,
@@ -398,18 +393,18 @@ func (p *rpcProxy) UnaryServerInterceptor(ctx context.Context, req interface{},
 // checkSubSystemStarted checks if the subsystem responsible for handling the
 // given URI has started.
 func (p *rpcProxy) checkSubSystemStarted(requestURI string) error {
-	var system string
+	var system subservers.SubServerName
 
 	handled, subServerName := p.subServerMgr.HandledBy(requestURI)
 	switch {
 	case handled:
 		system = subServerName
 
-	case p.permsMgr.IsSubServerURI(perms.SubServerLnd, requestURI):
-		system = LNDSubServer
+	case p.permsMgr.IsSubServerURI(subservers.LND, requestURI):
+		system = subservers.LND
 
-	case p.permsMgr.IsSubServerURI(perms.SubServerLit, requestURI):
-		system = LitdSubServer
+	case p.permsMgr.IsSubServerURI(subservers.LIT, requestURI):
+		system = subservers.LIT
 
 		// If the request is for the status server, then we allow the
 		// request even if Lit has not properly started. We also allow
@@ -539,10 +534,10 @@ func (p *rpcProxy) basicAuthToMacaroon(basicAuth, requestURI string,
 	case handled:
 		macPath = path
 
-	case p.permsMgr.IsSubServerURI(perms.SubServerLnd, requestURI):
+	case p.permsMgr.IsSubServerURI(subservers.LND, requestURI):
 		_, _, _, macPath, macData = p.cfg.lndConnectParams()
 
-	case p.permsMgr.IsSubServerURI(perms.SubServerLit, requestURI):
+	case p.permsMgr.IsSubServerURI(subservers.LIT, requestURI):
 		macPath = p.cfg.MacaroonPath
 
 	default:

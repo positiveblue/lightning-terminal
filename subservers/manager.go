@@ -6,8 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lightninglabs/lightning-terminal/perms"
-	"github.com/lightninglabs/lightning-terminal/status"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -161,18 +159,16 @@ type Manager struct {
 	servers []*subServer
 	mu      sync.RWMutex
 
-	statusServer *status.Server
-	permsMgr     *perms.Manager
+	statusServer ServerStatus
+	permChecker  PermissionsChecker
 }
 
 // NewManager constructs a new subServerMgr.
-func NewManager(permsMgr *perms.Manager,
-	statusServer *status.Server) *Manager {
-
+func NewManager(pc PermissionsChecker, statusServer ServerStatus) *Manager {
 	return &Manager{
 		servers:      []*subServer{},
 		statusServer: statusServer,
-		permsMgr:     permsMgr,
+		permChecker:  pc,
 	}
 }
 
@@ -268,7 +264,7 @@ func (s *Manager) GetRemoteConn(uri string) (bool, *grpc.ClientConn) {
 	defer s.mu.RUnlock()
 
 	for _, ss := range s.servers {
-		if !s.permsMgr.IsSubServerURI(ss.PermsSubServer(), uri) {
+		if !s.permChecker.IsSubServerURI(ss.Name(), uri) {
 			continue
 		}
 
@@ -294,7 +290,7 @@ func (s *Manager) ValidateMacaroon(ctx context.Context,
 	defer s.mu.RUnlock()
 
 	for _, ss := range s.servers {
-		if !s.permsMgr.IsSubServerURI(ss.PermsSubServer(), uri) {
+		if !s.permChecker.IsSubServerURI(ss.Name(), uri) {
 			continue
 		}
 
@@ -318,12 +314,12 @@ func (s *Manager) ValidateMacaroon(ctx context.Context,
 }
 
 // HandledBy returns true if one of its sub-servers owns the given URI.
-func (s *Manager) HandledBy(uri string) (bool, string) {
+func (s *Manager) HandledBy(uri string) (bool, SubServerName) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	for _, ss := range s.servers {
-		if !s.permsMgr.IsSubServerURI(ss.PermsSubServer(), uri) {
+		if !s.permChecker.IsSubServerURI(ss.Name(), uri) {
 			continue
 		}
 
@@ -340,7 +336,7 @@ func (s *Manager) MacaroonPath(uri string) (bool, string) {
 	defer s.mu.RUnlock()
 
 	for _, ss := range s.servers {
-		if !s.permsMgr.IsSubServerURI(ss.PermsSubServer(), uri) {
+		if !s.permChecker.IsSubServerURI(ss.Name(), uri) {
 			continue
 		}
 
@@ -362,7 +358,7 @@ func (s *Manager) ReadRemoteMacaroon(uri string) (macaroonPath string) {
 	defer s.mu.RUnlock()
 
 	for _, ss := range s.servers {
-		if !s.permsMgr.IsSubServerURI(ss.PermsSubServer(), uri) {
+		if !s.permChecker.IsSubServerURI(ss.Name(), uri) {
 			continue
 		}
 
@@ -404,7 +400,9 @@ func (s *Manager) Stop() error {
 
 // dialBackend connects to a gRPC backend through the given address and uses the
 // given TLS certificate to authenticate the connection.
-func dialBackend(name, dialAddr, tlsCertPath string) (*grpc.ClientConn, error) {
+func dialBackend(name SubServerName, dialAddr,
+	tlsCertPath string) (*grpc.ClientConn, error) {
+
 	tlsConfig, err := credentials.NewClientTLSFromFile(tlsCertPath, "")
 	if err != nil {
 		return nil, fmt.Errorf("could not read %s TLS cert %s: %v",

@@ -227,8 +227,8 @@ func (g *LightningTerminal) Run() error {
 		return fmt.Errorf("could not create permissions manager")
 	}
 
-	g.statusServer.RegisterServer(LNDSubServer)
-	g.statusServer.RegisterServer(LitdSubServer)
+	g.statusServer.RegisterServer(subservers.LND)
+	g.statusServer.RegisterServer(subservers.LIT)
 
 	g.subServerMgr = subservers.NewManager(g.permsMgr, g.statusServer)
 
@@ -260,7 +260,8 @@ func (g *LightningTerminal) Run() error {
 	startErr := g.start()
 	if startErr != nil {
 		g.statusServer.SetExitError(
-			LitdSubServer, "could not start Lit: %v", startErr,
+			subservers.LIT, "could not start Lit: %v",
+			startErr,
 		)
 	}
 
@@ -457,13 +458,13 @@ func (g *LightningTerminal) start() error {
 
 	case err := <-g.errQueue.ChanOut():
 		g.statusServer.SetExitError(
-			LNDSubServer, "error from errQueue channel",
+			subservers.LND, "error from errQueue channel",
 		)
 		return fmt.Errorf("could not start LND: %v", err)
 
 	case <-lndQuit:
 		g.statusServer.SetExitError(
-			LNDSubServer, "lndQuit channel closed",
+			subservers.LND, "lndQuit channel closed",
 		)
 		return fmt.Errorf("LND has stopped")
 
@@ -484,7 +485,8 @@ func (g *LightningTerminal) start() error {
 	g.lndConn, err = connectLND(g.cfg, bufRpcListener)
 	if err != nil {
 		g.statusServer.SetExitError(
-			LNDSubServer, "could not connect to LND: %v", err,
+			subservers.LND, "could not connect to LND: %v",
+			err,
 		)
 
 		return fmt.Errorf("could not connect to LND")
@@ -516,7 +518,7 @@ func (g *LightningTerminal) start() error {
 
 	case <-lndQuit:
 		g.statusServer.SetExitError(
-			LNDSubServer, "lndQuit channel closed",
+			subservers.LND, "lndQuit channel closed",
 		)
 		return fmt.Errorf("LND is not running")
 
@@ -525,7 +527,7 @@ func (g *LightningTerminal) start() error {
 	}
 
 	// We can now set the status of LND as running.
-	g.statusServer.SetRunning(LNDSubServer)
+	g.statusServer.SetRunning(subservers.LND)
 
 	// If we're in integrated mode, we'll need to wait for lnd to send the
 	// macaroon after unlock before going any further.
@@ -538,7 +540,7 @@ func (g *LightningTerminal) start() error {
 	err = g.setUpLNDClients()
 	if err != nil {
 		g.statusServer.SetExitError(
-			LNDSubServer, "could not set up LND clients: %v", err,
+			subservers.LND, "could not set up LND clients: %v", err,
 		)
 
 		return fmt.Errorf("could not start LND")
@@ -571,7 +573,7 @@ func (g *LightningTerminal) start() error {
 	}
 
 	// We can now set the status of LiT as running.
-	g.statusServer.SetRunning(LitdSubServer)
+	g.statusServer.SetRunning(subservers.LIT)
 
 	// Now block until we receive an error or the main shutdown signal.
 	select {
@@ -583,7 +585,7 @@ func (g *LightningTerminal) start() error {
 
 	case <-lndQuit:
 		g.statusServer.SetExitError(
-			LNDSubServer, "lndQuit channel closed",
+			subservers.LND, "lndQuit channel closed",
 		)
 
 		return fmt.Errorf("LND is not running")
@@ -726,7 +728,7 @@ func (g *LightningTerminal) startInternalSubServers(
 			),
 			MacaroonLocation: "litd",
 			StatelessInit:    !createDefaultMacaroons,
-			RequiredPerms:    perms.LitPermissions,
+			RequiredPerms:    perms.RequiredPermissions,
 			LndClient:        &g.lndClient.LndServices,
 			EphemeralKey:     lndclient.SharedKeyNUMS,
 			KeyLocator:       lndclient.SharedKeyLocator,
@@ -967,7 +969,7 @@ func (g *LightningTerminal) ValidateMacaroon(ctx context.Context,
 		if err != nil {
 			_, name := g.subServerMgr.HandledBy(fullMethod)
 			return &proxyErr{
-				proxyContext: name,
+				proxyContext: name.String(),
 				wrapped:      err,
 			}
 		}
@@ -975,7 +977,7 @@ func (g *LightningTerminal) ValidateMacaroon(ctx context.Context,
 		return nil
 	}
 
-	if g.permsMgr.IsSubServerURI(perms.SubServerLit, fullMethod) {
+	if g.permsMgr.IsSubServerURI(subservers.LIT, fullMethod) {
 		if !g.macaroonServiceStarted {
 			return fmt.Errorf("the macaroon service has not " +
 				"started yet")
@@ -1005,7 +1007,12 @@ func (g *LightningTerminal) ValidateMacaroon(ctx context.Context,
 //
 // NOTE: This is part of the lnd.ExternalValidator interface.
 func (g *LightningTerminal) Permissions() map[string][]bakery.Op {
-	return g.permsMgr.GetLitPerms()
+	subServerNames := []subservers.SubServerName{
+		subservers.LIT, subservers.FARADAY, subservers.POOL,
+		subservers.LOOP,
+	}
+
+	return g.permsMgr.GetPerms(subServerNames)
 }
 
 // BuildWalletConfig is responsible for creating or unlocking and then

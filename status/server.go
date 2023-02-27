@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lightninglabs/lightning-terminal/litrpc"
+	"github.com/lightninglabs/lightning-terminal/subservers"
 )
 
 // Server is an implementation of the litrpc.StatusServer which can be
@@ -14,7 +15,7 @@ import (
 type Server struct {
 	litrpc.UnimplementedStatusServer
 
-	servers map[string]*Status
+	servers map[subservers.SubServerName]*Status
 	mu      sync.RWMutex
 }
 
@@ -33,13 +34,13 @@ func NewStatus() *Status {
 // NewServer constructs a new statusServer.
 func NewServer() *Server {
 	return &Server{
-		servers: map[string]*Status{},
+		servers: map[subservers.SubServerName]*Status{},
 	}
 }
 
 // RegisterServer will create a new sub-server entry for the statusServer to
 // keep track of.
-func (s *Server) RegisterServer(name string) {
+func (s *Server) RegisterServer(name subservers.SubServerName) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -57,7 +58,7 @@ func (s *Server) SubServerState(_ context.Context,
 
 	resp := make(map[string]*litrpc.SubServerStatus, len(s.servers))
 	for name, status := range s.servers {
-		resp[name] = &litrpc.SubServerStatus{
+		resp[name.String()] = &litrpc.SubServerStatus{
 			Running: status.Running,
 			Error:   status.Err,
 		}
@@ -69,7 +70,7 @@ func (s *Server) SubServerState(_ context.Context,
 }
 
 // getSubServerState queries the current status of a given sub-server.
-func (s *Server) ServerStatus(name string) *Status {
+func (s *Server) ServerStatus(name subservers.SubServerName) *Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -87,7 +88,7 @@ func (s *Server) ServerStatus(name string) *Status {
 
 // SetRunning can be used to set the status of a sub-server as running
 // with no errors.
-func (s *Server) SetRunning(name string) {
+func (s *Server) SetRunning(name subservers.SubServerName) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -99,7 +100,7 @@ func (s *Server) SetRunning(name string) {
 
 // SetStopped can be used to set the status of a sub-server as not running
 // and with no errors.
-func (s *Server) SetStopped(name string) {
+func (s *Server) SetStopped(name subservers.SubServerName) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -111,7 +112,7 @@ func (s *Server) SetStopped(name string) {
 
 // setServerErrored can be used to set the status of a sub-server as not running
 // and also to set an error message for the sub-server.
-func (s *Server) SetExitError(name string, errStr string,
+func (s *Server) SetExitError(name subservers.SubServerName, errStr string,
 	params ...interface{}) {
 
 	s.mu.Lock()

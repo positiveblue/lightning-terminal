@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	faraday "github.com/lightninglabs/faraday/frdrpcserver/perms"
+	"github.com/lightninglabs/lightning-terminal/subservers"
 	loop "github.com/lightninglabs/loop/loopd/perms"
 	pool "github.com/lightninglabs/pool/perms"
 	"github.com/lightningnetwork/lnd"
@@ -33,7 +34,7 @@ import (
 var (
 	// LitPermissions is a map of all LiT RPC methods and their required
 	// macaroon permissions to access the session service.
-	LitPermissions = map[string][]bakery.Op{
+	RequiredPermissions = map[string][]bakery.Op{
 		"/litrpc.Sessions/AddSession": {{
 			Entity: "sessions",
 			Action: "write",
@@ -135,16 +136,8 @@ var (
 	}
 )
 
-// SubServerName is a name used to identify a particular Lit sub-server.
-type SubServerName string
-
-const (
-	SubServerPool    SubServerName = "pool"
-	SubServerLoop    SubServerName = "loop"
-	SubServerFaraday SubServerName = "faraday"
-	SubServerLit     SubServerName = "lit"
-	SubServerLnd     SubServerName = "lnd"
-)
+// SubServerPerms maps the sub-server names to uri to permission operations.
+type SubServerPerms map[subservers.SubServerName]map[string][]bakery.Op
 
 // Manager manages the permission lists that Lit requires.
 type Manager struct {
@@ -158,7 +151,7 @@ type Manager struct {
 	// It contains all the permissions that will not change throughout the
 	// lifetime of the manager. It maps sub-server name to uri to permission
 	// operations.
-	fixedPerms map[SubServerName]map[string][]bakery.Op
+	fixedPerms SubServerPerms
 
 	// perms is a map containing all permissions that the manager knows
 	// are available for use. This map will start out not including any of
@@ -177,17 +170,19 @@ type Manager struct {
 // then OnLNDBuildTags can be used to specify the exact sub-servers that LND
 // was compiled with and then only the corresponding permissions will be added.
 func NewManager(withAllSubServers bool) (*Manager, error) {
-	permissions := make(map[SubServerName]map[string][]bakery.Op)
-	permissions[SubServerFaraday] = faraday.RequiredPermissions
-	permissions[SubServerLoop] = loop.RequiredPermissions
-	permissions[SubServerPool] = pool.RequiredPermissions
-	permissions[SubServerLit] = LitPermissions
+
+	permissions := make(map[subservers.SubServerName]map[string][]bakery.Op)
+	permissions[subservers.FARADAY] = faraday.RequiredPermissions
+	permissions[subservers.LOOP] = loop.RequiredPermissions
+	permissions[subservers.POOL] = pool.RequiredPermissions
+	permissions[subservers.LIT] = RequiredPermissions
 	for k, v := range MacaroonWhitelist {
-		permissions[SubServerLit][k] = v
+		permissions[subservers.LND][k] = v
 	}
-	permissions[SubServerLnd] = lnd.MainRPCServerPermissions()
+
+	permissions[subservers.LND] = lnd.MainRPCServerPermissions()
 	for k, v := range whiteListedLNDMethods {
-		permissions[SubServerLnd][k] = v
+		permissions[subservers.LND][k] = v
 	}
 
 	// Collect all LND sub-server permissions along with the name of the
@@ -214,7 +209,7 @@ func NewManager(withAllSubServers bool) (*Manager, error) {
 			if withAllSubServers ||
 				lndAutoCompiledSubServers[name] {
 
-				permissions[SubServerLnd][key] = value
+				permissions[subservers.LND][key] = value
 			}
 		}
 	}
@@ -351,31 +346,25 @@ func (pm *Manager) ActivePermissions(readOnly bool) []bakery.Op {
 // GetLitPerms returns a map of all permissions that the manager is aware of
 // _except_ for any LND permissions. In other words, this returns permissions
 // for which the external validator of Lit is responsible.
-func (pm *Manager) GetLitPerms() map[string][]bakery.Op {
-	mapSize := len(pm.fixedPerms[SubServerLit]) +
-		len(pm.fixedPerms[SubServerFaraday]) +
-		len(pm.fixedPerms[SubServerPool]) +
-		len(pm.fixedPerms[SubServerLoop])
+func (pm *Manager) GetPerms(
+	subservers []subservers.SubServerName) map[string][]bakery.Op {
 
+	mapSize := 100
 	result := make(map[string][]bakery.Op, mapSize)
-	for key, value := range pm.fixedPerms[SubServerFaraday] {
-		result[key] = value
+	for _, subserver := range subservers {
+		for key, value := range pm.fixedPerms[subserver] {
+			result[key] = value
+		}
 	}
-	for key, value := range pm.fixedPerms[SubServerLoop] {
-		result[key] = value
-	}
-	for key, value := range pm.fixedPerms[SubServerPool] {
-		result[key] = value
-	}
-	for key, value := range pm.fixedPerms[SubServerLit] {
-		result[key] = value
-	}
+
 	return result
 }
 
 // IsSubServerURI if the given URI belongs to the RPC of the given server.
-func (pm *Manager) IsSubServerURI(name SubServerName, uri string) bool {
-	if name == SubServerLnd {
+func (pm *Manager) IsSubServerURI(name subservers.SubServerName,
+	uri string) bool {
+
+	if name == subservers.LND {
 		return pm.isLndURI(uri)
 	}
 
@@ -393,7 +382,7 @@ func (pm *Manager) isLndURI(uri string) bool {
 			break
 		}
 	}
-	_, lndCall := pm.fixedPerms[SubServerLnd][uri]
+	_, lndCall := pm.fixedPerms[subservers.LND][uri]
 	return lndCall || lndSubServerCall
 }
 

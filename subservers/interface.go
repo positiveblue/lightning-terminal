@@ -1,7 +1,6 @@
 package subservers
 
 import (
-	"github.com/lightninglabs/lightning-terminal/perms"
 	"github.com/lightninglabs/lndclient"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/macaroons"
@@ -15,7 +14,7 @@ import (
 // operations and other sub-servers can too.
 type SubServer interface {
 	// Name returns the name of the sub-server.
-	Name() string
+	Name() SubServerName
 
 	// Remote returns true if the sub-server is running remotely and so
 	// should be connected to instead of spinning up an integrated server.
@@ -35,10 +34,6 @@ type SubServer interface {
 	// the given registrar.
 	RegisterGrpcService(grpc.ServiceRegistrar)
 
-	// PermsSubServer returns the name that the permission manager stores
-	// the permissions for this SubServer under.
-	PermsSubServer() perms.SubServerName
-
 	// ServerErrChan returns an error channel that should be listened on
 	// after starting the sub-server to listen for any runtime errors. It
 	// is optional and may be set to nil. This only applies in integrated
@@ -50,4 +45,20 @@ type SubServer interface {
 	MacPath() string
 
 	macaroons.MacaroonValidator
+}
+
+type PermissionsChecker interface {
+	// IsSubServerURI if the given URI belongs to the RPC of the given
+	// server.
+	IsSubServerURI(name SubServerName, uri string) bool
+}
+
+type ServerStatus interface {
+	RegisterServer(name SubServerName)
+
+	SetRunning(name SubServerName)
+
+	SetStopped(name SubServerName)
+
+	SetExitError(name SubServerName, errStr string, params ...interface{})
 }
